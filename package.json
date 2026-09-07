@@ -1,0 +1,25 @@
+{
+  "name": "ai-calorrie",
+  "version": "1.0.0",
+  "description": "AI Calorie Tracker",
+  "main": "src/app.js",
+  "scripts": {
+    "dev": "nodemon src/app.js",
+    "tunnel": "lt --port 3000"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google/genai": "^1.0.0",
+    "better-sqlite3": "^13.0.3",
+    "dotenv": "^16.0.0",
+    "express": "^5.1.0",
+    "multer": "^2.0.2",
+    "openai": "^5.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10",
+    "localtunnel": "^2.0.2"
+  }
+}
