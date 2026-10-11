@@ -23,13 +23,22 @@ const {
 } = require("./onboardingService");
 
 const app = express();
-const PORT = 3000;
+
+// Penting: Render menentukan PORT saat aplikasi online.
+const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
+
+// Menampilkan website dari folder public.
 app.use(express.static(path.join(__dirname, "../public")));
 
+
+// ============================================================
+// FILE UPLOAD
+// ============================================================
+
 const upload = multer({
-  dest: "uploads/",
+  dest: path.join(__dirname, "../uploads"),
   limits: {
     fileSize: 10 * 1024 * 1024
   },
@@ -42,9 +51,21 @@ const upload = multer({
   }
 });
 
+
+// ============================================================
+// HOME PAGE
+// ============================================================
+
 app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "../public/index.html"));
+  res.sendFile(
+    path.join(__dirname, "../public/index.html")
+  );
 });
+
+
+// ============================================================
+// HEALTH CHECK
+// ============================================================
 
 app.get("/health", (req, res) => {
   res.json({
@@ -52,6 +73,11 @@ app.get("/health", (req, res) => {
     message: "AI Calorie Tracker API is running"
   });
 });
+
+
+// ============================================================
+// CREATE USER
+// ============================================================
 
 app.post("/api/users", (req, res) => {
   try {
@@ -90,10 +116,16 @@ app.post("/api/users", (req, res) => {
       height
     });
 
-    const tdee = calculateTDEE(bmr, activity_level);
+    const tdee = calculateTDEE(
+      bmr,
+      activity_level
+    );
 
     const dailyCalorieTarget =
-      calculateDailyCalorieTarget(tdee, goal);
+      calculateDailyCalorieTarget(
+        tdee,
+        goal
+      );
 
     const result = db.prepare(`
       INSERT INTO users (
@@ -134,6 +166,7 @@ app.post("/api/users", (req, res) => {
       message: "User created successfully",
       user
     });
+
   } catch (error) {
     console.error(error);
 
@@ -142,6 +175,11 @@ app.post("/api/users", (req, res) => {
     });
   }
 });
+
+
+// ============================================================
+// GET USER PROFILE
+// ============================================================
 
 app.get("/api/users/:whatsapp_id", (req, res) => {
   try {
@@ -160,6 +198,7 @@ app.get("/api/users/:whatsapp_id", (req, res) => {
     }
 
     res.json({ user });
+
   } catch (error) {
     console.error(error);
 
@@ -168,6 +207,11 @@ app.get("/api/users/:whatsapp_id", (req, res) => {
     });
   }
 });
+
+
+// ============================================================
+// CREATE FOOD LOG
+// ============================================================
 
 app.post("/api/food-logs", (req, res) => {
   try {
@@ -239,6 +283,7 @@ app.post("/api/food-logs", (req, res) => {
       message: "Food logged successfully",
       food
     });
+
   } catch (error) {
     console.error(error);
 
@@ -248,66 +293,81 @@ app.post("/api/food-logs", (req, res) => {
   }
 });
 
-app.get("/api/food-logs/:whatsapp_id/today", (req, res) => {
-  try {
-    const user = db
-      .prepare(`
+
+// ============================================================
+// GET TODAY'S FOOD LOGS
+// ============================================================
+
+app.get(
+  "/api/food-logs/:whatsapp_id/today",
+  (req, res) => {
+    try {
+      const user = db
+        .prepare(`
+          SELECT
+            id,
+            name,
+            daily_calorie_target
+          FROM users
+          WHERE whatsapp_id = ?
+        `)
+        .get(req.params.whatsapp_id);
+
+      if (!user) {
+        return res.status(404).json({
+          error: "User not found"
+        });
+      }
+
+      const foods = db.prepare(`
         SELECT
           id,
-          name,
-          daily_calorie_target
-        FROM users
-        WHERE whatsapp_id = ?
-      `)
-      .get(req.params.whatsapp_id);
+          food_name,
+          calories,
+          protein,
+          carbs,
+          fat,
+          portion,
+          eaten_at
+        FROM food_logs
+        WHERE user_id = ?
+          AND date(eaten_at) = date('now', 'localtime')
+        ORDER BY eaten_at ASC
+      `).all(user.id);
 
-    if (!user) {
-      return res.status(404).json({
-        error: "User not found"
+      const totalCalories = foods.reduce(
+        (total, food) => total + food.calories,
+        0
+      );
+
+      res.json({
+        user: {
+          name: user.name,
+          daily_calorie_target:
+            user.daily_calorie_target
+        },
+        foods,
+        summary: {
+          total_calories: totalCalories,
+          remaining_calories:
+            user.daily_calorie_target - totalCalories
+        }
+      });
+
+    } catch (error) {
+      console.error(error);
+
+      res.status(500).json({
+        error: "Failed to get food logs"
       });
     }
-
-    const foods = db.prepare(`
-      SELECT
-        id,
-        food_name,
-        calories,
-        protein,
-        carbs,
-        fat,
-        portion,
-        eaten_at
-      FROM food_logs
-      WHERE user_id = ?
-        AND date(eaten_at) = date('now', 'localtime')
-      ORDER BY eaten_at ASC
-    `).all(user.id);
-
-    const totalCalories = foods.reduce(
-      (total, food) => total + food.calories,
-      0
-    );
-
-    res.json({
-      user: {
-        name: user.name,
-        daily_calorie_target: user.daily_calorie_target
-      },
-      foods,
-      summary: {
-        total_calories: totalCalories,
-        remaining_calories:
-          user.daily_calorie_target - totalCalories
-      }
-    });
-  } catch (error) {
-    console.error(error);
-
-    res.status(500).json({
-      error: "Failed to get food logs"
-    });
   }
-});
+);
+
+
+// ============================================================
+// ANALYZE FOOD IMAGE + CHATBOT REPLY
+// ============================================================
 
 app.post(
   "/api/analyze-food-chat",
@@ -382,13 +442,11 @@ app.post(
           );
 
           insertedFoods.push(
-            db
-              .prepare(`
-                SELECT *
-                FROM food_logs
-                WHERE id = ?
-              `)
-              .get(result.lastInsertRowid)
+            db.prepare(`
+              SELECT *
+              FROM food_logs
+              WHERE id = ?
+            `).get(result.lastInsertRowid)
           );
         }
       });
@@ -412,20 +470,27 @@ app.post(
       let reply =
         "🍽️ Aku berhasil menganalisis makanan kamu!\n\n";
 
-      insertedFoods.forEach((food) => {
-        reply += `🍲 ${food.food_name}\n`;
-        reply += `⚖️ Porsi: ${
-          food.portion || "Tidak diketahui"
-        }\n`;
-        reply += `🔥 Estimasi: ${Math.round(
-          food.calories
-        )} kcal\n\n`;
-      });
+      if (insertedFoods.length > 0) {
+        insertedFoods.forEach((food) => {
+          reply += `🍲 ${food.food_name}\n`;
+          reply += `⚖️ Porsi: ${
+            food.portion || "Tidak diketahui"
+          }\n`;
+          reply += `🔥 Estimasi: ${Math.round(
+            food.calories
+          )} kcal\n\n`;
+        });
+      } else {
+        reply +=
+          "Aku belum bisa mengenali makanan pada foto ini dengan cukup yakin 😅\n\n";
+      }
 
-      reply += `📊 Rekap hari ini\n`;
+      reply += "📊 Rekap hari ini\n";
+
       reply += `🔥 Total: ${Math.round(
         totalCalories
       )} kcal\n`;
+
       reply += `🎯 Target: ${Math.round(
         user.daily_calorie_target
       )} kcal\n`;
@@ -451,6 +516,7 @@ app.post(
           remaining_calories: remainingCalories
         }
       });
+
     } catch (error) {
       console.error(error);
 
@@ -458,16 +524,19 @@ app.post(
         error: "Failed to analyze food image",
         details: error.message
       });
+
     } finally {
-      if (
-        imagePath &&
-        fs.existsSync(imagePath)
-      ) {
+      if (imagePath && fs.existsSync(imagePath)) {
         fs.unlinkSync(imagePath);
       }
     }
   }
 );
+
+
+// ============================================================
+// CHATBOT + ONBOARDING
+// ============================================================
 
 app.post("/api/chat", (req, res) => {
   try {
@@ -487,6 +556,9 @@ app.post("/api/chat", (req, res) => {
       .toLowerCase()
       .trim();
 
+
+    // RESET ONBOARDING
+
     if (text === "reset") {
       deleteSession(whatsapp_id);
 
@@ -495,6 +567,9 @@ app.post("/api/chat", (req, res) => {
           "Data sementara sudah di-reset. Ketik 'halo' untuk mulai lagi."
       });
     }
+
+
+    // CHECK ONBOARDING
 
     const session = getSession(whatsapp_id);
 
@@ -507,6 +582,9 @@ app.post("/api/chat", (req, res) => {
       });
     }
 
+
+    // FIND EXISTING USER
+
     const user = db
       .prepare(`
         SELECT *
@@ -515,13 +593,17 @@ app.post("/api/chat", (req, res) => {
       `)
       .get(whatsapp_id);
 
+
+    // NEW USER
+
     if (!user) {
       return res.json({
-        reply: startOnboarding(
-          whatsapp_id
-        )
+        reply: startOnboarding(whatsapp_id)
       });
     }
+
+
+    // PROFILE
 
     if (
       text === "profil" ||
@@ -543,6 +625,9 @@ app.post("/api/chat", (req, res) => {
       });
     }
 
+
+    // CALORIE TARGET
+
     if (
       text.includes("target kalori") ||
       text.includes("target harian")
@@ -553,6 +638,9 @@ app.post("/api/chat", (req, res) => {
         )} kcal/hari.`
       });
     }
+
+
+    // REMAINING CALORIES
 
     if (
       text.includes("sisa kalori") ||
@@ -570,6 +658,9 @@ app.post("/api/chat", (req, res) => {
 
       const total = result.total_calories;
 
+      const remaining =
+        user.daily_calorie_target - total;
+
       return res.json({
         reply: `📊 Kalori hari ini
 
@@ -578,10 +669,13 @@ app.post("/api/chat", (req, res) => {
           user.daily_calorie_target
         )} kcal
 ✅ Sisa: ${Math.round(
-          user.daily_calorie_target - total
+          remaining
         )} kcal`
       });
     }
+
+
+    // DAILY SUMMARY
 
     if (
       text.includes("rekap") ||
@@ -599,15 +693,15 @@ app.post("/api/chat", (req, res) => {
       `).all(user.id);
 
       const total = foods.reduce(
-        (sum, food) =>
-          sum + food.calories,
+        (sum, food) => sum + food.calories,
         0
       );
 
       let reply = "📊 Rekap hari ini\n\n";
 
       if (foods.length === 0) {
-        reply += "Belum ada makanan yang dicatat.\n\n";
+        reply +=
+          "Belum ada makanan yang dicatat.\n\n";
       } else {
         foods.forEach((food) => {
           reply += `🍽️ ${food.food_name} — ${Math.round(
@@ -619,15 +713,20 @@ app.post("/api/chat", (req, res) => {
       }
 
       reply += `🔥 Total: ${Math.round(total)} kcal\n`;
+
       reply += `🎯 Target: ${Math.round(
         user.daily_calorie_target
       )} kcal\n`;
+
       reply += `✅ Sisa: ${Math.round(
         user.daily_calorie_target - total
       )} kcal`;
 
       return res.json({ reply });
     }
+
+
+    // MENU
 
     if (
       text === "halo" ||
@@ -651,10 +750,14 @@ Atau kirim 📸 foto makanan.`
       });
     }
 
+
+    // DEFAULT
+
     return res.json({
       reply:
         "Aku belum mengerti 😅 Ketik 'menu' untuk melihat fitur."
     });
+
   } catch (error) {
     console.error(error);
 
@@ -664,6 +767,11 @@ Atau kirim 📸 foto makanan.`
   }
 });
 
+
+// ============================================================
+// ERROR HANDLER
+// ============================================================
+
 app.use((error, req, res, next) => {
   console.error(error);
 
@@ -672,7 +780,12 @@ app.use((error, req, res, next) => {
   });
 });
 
-app.listen(PORT, () => {
+
+// ============================================================
+// START SERVER
+// ============================================================
+
+app.listen(PORT, "0.0.0.0", () => {
   console.log(
     `Server running at http://localhost:${PORT}`
   );
